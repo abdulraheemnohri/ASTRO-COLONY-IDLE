@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useGameStore } from './useGameStore';
 
-describe('useGameStore Offline Progress', () => {
+describe('useGameStore Logic', () => {
   beforeEach(() => {
     useGameStore.setState({
       resources: {
@@ -14,6 +14,27 @@ describe('useGameStore Offline Progress', () => {
         ALIEN_BIOMASS: 0,
       },
       lastSaveTime: Date.now(),
+      buildings: [
+        {
+          id: 'solar-hub-001',
+          name: 'Solar Hub',
+          type: 'ENERGY_GENERATOR',
+          level: 1,
+          production: { ENERGY: 10 },
+          cost: { METAL: 50 },
+          description: 'Basic energy generation.',
+        },
+        {
+          id: 'mining-station-001',
+          name: 'Mining Station',
+          type: 'METAL_EXTRACTOR',
+          level: 1,
+          production: { METAL: 5 },
+          consumption: { ENERGY: 2 },
+          cost: { METAL: 100, ENERGY: 20 },
+          description: 'Extracts metal.',
+        }
+      ],
     });
   });
 
@@ -21,7 +42,6 @@ describe('useGameStore Offline Progress', () => {
     const startTime = Date.now();
     const tenSecondsLater = startTime + 10000;
 
-    // Mock Date.now to simulate time passing
     vi.spyOn(Date, 'now').mockReturnValue(tenSecondsLater);
 
     const { calculateOfflineProgress } = useGameStore.getState();
@@ -29,16 +49,41 @@ describe('useGameStore Offline Progress', () => {
 
     const { resources } = useGameStore.getState();
 
-    // Solar Hub: 10 Energy/sec * 10 sec = 100 Energy
-    // Initial 100 + 100 = 200
-    // Mining Station: 2 Energy consumption/sec * 10 sec = 20 Energy
-    // 200 - 20 = 180
-    expect(resources.ENERGY).toBe(180);
-
-    // Mining Station: 5 Metal/sec * 10 sec = 50 Metal
-    // Initial 200 + 50 = 250
-    expect(resources.METAL).toBe(250);
+    expect(resources.ENERGY).toBe(180); // 100 + (10*10) - (2*10)
+    expect(resources.METAL).toBe(250);  // 200 + (5*10)
 
     vi.restoreAllMocks();
+  });
+
+  it('should allow purchasing a building if resources are sufficient', () => {
+    const { purchaseBuilding } = useGameStore.getState();
+    const template = {
+      name: 'New Hub',
+      type: 'HUB',
+      level: 1,
+      cost: { METAL: 100 },
+      description: 'Test',
+    };
+
+    const result = purchaseBuilding(template);
+    expect(result).toBe(true);
+    expect(useGameStore.getState().resources.METAL).toBe(100);
+    expect(useGameStore.getState().buildings.length).toBe(3);
+  });
+
+  it('should fail to purchase a building if resources are insufficient', () => {
+    const { purchaseBuilding } = useGameStore.getState();
+    const template = {
+      name: 'Expensive Hub',
+      type: 'HUB',
+      level: 1,
+      cost: { METAL: 1000 },
+      description: 'Too expensive',
+    };
+
+    const result = purchaseBuilding(template);
+    expect(result).toBe(false);
+    expect(useGameStore.getState().resources.METAL).toBe(200);
+    expect(useGameStore.getState().buildings.length).toBe(2);
   });
 });

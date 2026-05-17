@@ -5,6 +5,7 @@ import { INITIAL_BUILDINGS } from '../shared/constants/buildings';
 interface GameActions {
   addResource: (type: ResourceType, amount: number) => void;
   buildBuilding: (building: Building) => void;
+  purchaseBuilding: (buildingTemplate: Omit<Building, 'id'>) => boolean;
   calculateOfflineProgress: () => void;
   saveGame: () => void;
 }
@@ -30,6 +31,32 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
   buildBuilding: (building) => set((state) => ({
     buildings: [...state.buildings, building]
   })),
+
+  purchaseBuilding: (template) => {
+    const { resources } = get();
+
+    // Check costs
+    for (const [res, amount] of Object.entries(template.cost)) {
+      if ((resources[res as ResourceType] || 0) < amount) {
+        return false;
+      }
+    }
+
+    // Deduct resources
+    const newResources = { ...resources };
+    for (const [res, amount] of Object.entries(template.cost)) {
+      newResources[res as ResourceType] -= amount;
+    }
+
+    // Add building
+    const newBuilding: Building = {
+      ...template,
+      id: `${template.type.toLowerCase()}-${Date.now()}`,
+    };
+
+    set({ resources: newResources, buildings: [...get().buildings, newBuilding] });
+    return true;
+  },
 
   calculateOfflineProgress: () => {
     const { lastSaveTime, buildings, resources } = get();
