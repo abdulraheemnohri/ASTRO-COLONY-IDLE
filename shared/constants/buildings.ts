@@ -1,6 +1,16 @@
-import type { Building } from '../schemas/game';
+import type { Building, Technology } from '../schemas/game';
 
 export const INITIAL_BUILDINGS: Building[] = [
+  {
+    id: 'colony-core-001',
+    name: 'Colony Core',
+    type: 'COMMAND',
+    level: 1,
+    production: { ENERGY: 2 },
+    cost: { METAL: 0 },
+    description: 'Autonomous command spine for the first planetary outpost.',
+    automation: 1,
+  },
   {
     id: 'solar-hub-001',
     name: 'Solar Hub',
@@ -8,7 +18,7 @@ export const INITIAL_BUILDINGS: Building[] = [
     level: 1,
     production: { ENERGY: 10 },
     cost: { METAL: 50 },
-    description: 'Basic energy generation using solar arrays.',
+    description: 'Basic energy generation using orbital solar arrays.',
   },
   {
     id: 'mining-station-001',
@@ -18,8 +28,9 @@ export const INITIAL_BUILDINGS: Building[] = [
     production: { METAL: 5 },
     consumption: { ENERGY: 2 },
     cost: { METAL: 100, ENERGY: 20 },
-    description: 'Extracts metal from the planet surface.',
-  }
+    description: 'Extracts metal from the planet surface using one mining drone.',
+    automation: 1,
+  },
 ];
 
 export const BUILDING_TEMPLATES: Omit<Building, 'id'>[] = [
@@ -39,14 +50,110 @@ export const BUILDING_TEMPLATES: Omit<Building, 'id'>[] = [
     consumption: { ENERGY: 2 },
     cost: { METAL: 100, ENERGY: 20 },
     description: 'Extracts metal from the planet surface.',
+    automation: 1,
   },
   {
-    name: 'Crystal Mine',
-    type: 'CRYSTAL_EXTRACTOR',
+    name: 'Drone Factory',
+    type: 'DRONE_FACTORY',
     level: 1,
-    production: { CRYSTAL: 2 },
-    consumption: { ENERGY: 5 },
-    cost: { METAL: 200, ENERGY: 50 },
-    description: 'Extracts crystal from the planet crust.',
-  }
+    production: { METAL: 3 },
+    consumption: { ENERGY: 6, GAS: 1 },
+    cost: { METAL: 260, CRYSTAL: 40, ENERGY: 120 },
+    description: 'Builds autonomous mining and defense drones for idle automation.',
+    automation: 3,
+  },
+  {
+    name: 'Storage Core',
+    type: 'STORAGE',
+    level: 1,
+    cost: { METAL: 180, CRYSTAL: 25 },
+    description: 'Compresses local colony snapshots and increases safe stockpiles.',
+  },
+  {
+    name: 'Defense Turret',
+    type: 'DEFENSE',
+    level: 1,
+    consumption: { ENERGY: 3 },
+    cost: { METAL: 220, ENERGY: 80 },
+    description: 'Automated plasma turret that mitigates pirate and alien raids.',
+    defense: 18,
+  },
+  {
+    name: 'Quantum Reactor',
+    type: 'ADVANCED_POWER',
+    level: 1,
+    production: { ENERGY: 55, QUANTUM_DUST: 0.2 },
+    consumption: { CRYSTAL: 0.5 },
+    cost: { METAL: 900, CRYSTAL: 260, DARK_MATTER: 5 },
+    description: 'Advanced reactor that unlocks deep-space infrastructure.',
+  },
+  {
+    name: 'Nano Lab',
+    type: 'RESEARCH',
+    level: 1,
+    production: { QUANTUM_DUST: 0.5 },
+    consumption: { ENERGY: 12, CRYSTAL: 1 },
+    cost: { METAL: 520, CRYSTAL: 180, GAS: 80 },
+    description: 'Offline AI-safe research lab for dynamic technology discovery.',
+  },
+  {
+    name: 'Wormhole Gate',
+    type: 'TRAVEL',
+    level: 1,
+    consumption: { ENERGY: 25, DARK_MATTER: 0.1 },
+    cost: { METAL: 1200, CRYSTAL: 450, DARK_MATTER: 25 },
+    description: 'Projects a local-sector bridge for P2P galaxy travel and trade.',
+  },
+  {
+    name: 'Orbital Cannon',
+    type: 'DEFENSE',
+    level: 1,
+    consumption: { ENERGY: 18 },
+    cost: { METAL: 1000, CRYSTAL: 220, QUANTUM_DUST: 30 },
+    description: 'High-orbit weapon platform for cooperative defense events.',
+    defense: 75,
+  },
+  {
+    name: 'AI Core Nexus',
+    type: 'AI_CORE',
+    level: 1,
+    production: { QUANTUM_DUST: 1 },
+    consumption: { ENERGY: 30 },
+    cost: { METAL: 1500, CRYSTAL: 550, QUANTUM_DUST: 60 },
+    description: 'Local WebLLM governance node that proposes safe JSON evolution patches.',
+    automation: 8,
+  },
+];
+
+export const INITIAL_TECHNOLOGIES: Technology[] = [
+  {
+    id: 'neural-drone-swarm',
+    name: 'Neural Drone Swarm',
+    rarity: 'UNCOMMON',
+    cost: { METAL: 350, CRYSTAL: 90, ENERGY: 200 },
+    benefits: ['+2 autonomous drones', '+10% mining output while online or offline'],
+    risks: ['Small chance of AI corruption events at high threat levels'],
+    dependencies: [],
+    unlocked: false,
+  },
+  {
+    id: 'gravity-harvester',
+    name: 'Gravity Harvester',
+    rarity: 'RARE',
+    cost: { METAL: 800, CRYSTAL: 250, GAS: 120 },
+    benefits: ['Unlocks passive dark matter trickle', 'Improves wormhole stability'],
+    risks: ['Can attract plasma worms during storms'],
+    dependencies: ['neural-drone-swarm'],
+    unlocked: false,
+  },
+  {
+    id: 'quantum-shield-mesh',
+    name: 'Quantum Shield Mesh',
+    rarity: 'EPIC',
+    cost: { ENERGY: 1000, CRYSTAL: 420, QUANTUM_DUST: 35 },
+    benefits: ['+80 colony shields', 'Shared raid mitigation over LAN sync'],
+    risks: ['Consumes emergency reserves when overloaded'],
+    dependencies: ['gravity-harvester'],
+    unlocked: false,
+  },
 ];

@@ -14,6 +14,15 @@ describe('useGameStore Logic', () => {
         ALIEN_BIOMASS: 0,
       },
       lastSaveTime: Date.now(),
+      technologies: [],
+      chatLog: [],
+      playerId: 'test-player',
+      colonyName: 'Astro Colony Alpha',
+      drones: 0,
+      shields: 40,
+      threatLevel: 12,
+      galaxySeed: 'test-seed',
+      hostMode: 'SOLO',
       buildings: [
         {
           id: 'solar-hub-001',

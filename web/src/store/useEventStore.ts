@@ -4,10 +4,12 @@ export interface GalaxyEvent {
   id: string;
   name: string;
   description: string;
-  type: 'ENVIRONMENTAL' | 'PIRATE_RAID' | 'AI_BOOST';
-  duration: number; // in seconds
+  type: 'ENVIRONMENTAL' | 'PIRATE_RAID' | 'ALIEN_INVASION' | 'COSMIC_STORM' | 'AI_CORRUPTION' | 'AI_BOOST';
+  duration: number;
   effects: {
     resourceMultiplier?: Record<string, number>;
+    threatDelta?: number;
+    shieldDelta?: number;
   };
   startTime: number;
 }
@@ -24,18 +26,18 @@ export const useEventStore = create<EventState>((set) => ({
   triggerEvent: (template) => {
     const newEvent: GalaxyEvent = {
       ...template,
-      id: "event-" + Date.now(),
+      id: `event-${Date.now()}-${Math.floor(Math.random() * 10000)}`,
       startTime: Date.now(),
     };
-    set(state => ({ activeEvents: [...state.activeEvents, newEvent] }));
+    set((state) => ({ activeEvents: [...state.activeEvents.slice(-4), newEvent] }));
   },
 
   removeExpiredEvents: () => {
     const currentTime = Date.now();
-    set(state => ({
-      activeEvents: state.activeEvents.filter(e =>
-        (currentTime - e.startTime) / 1000 < e.duration
-      )
+    set((state) => ({
+      activeEvents: state.activeEvents.filter((event) =>
+        (currentTime - event.startTime) / 1000 < event.duration,
+      ),
     }));
-  }
+  },
 }));
