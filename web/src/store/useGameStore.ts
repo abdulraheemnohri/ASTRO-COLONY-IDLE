@@ -1,9 +1,12 @@
 import { create } from 'zustand';
+import { get as idbGet, set as idbSet } from 'idb-keyval';
 import type { Building, ChatMessage, GameState, MultiplayerPacket, ResourceMap, ResourceType } from '../../../shared/schemas/game';
 import { GameStateSchema } from '../../../shared/schemas/game';
 import { INITIAL_BUILDINGS, INITIAL_TECHNOLOGIES } from '../../../shared/constants/buildings';
+import { compressState, decompressState } from './persistenceUtils';
 
 const SAVE_KEY = 'astro_colony_save';
+const BACKUP_KEY = 'astro_colony_backup';
 const MAX_OFFLINE_SECONDS = 60 * 60 * 24 * 7;
 
 const createResourceBank = (): Record<ResourceType, number> => ({
@@ -18,7 +21,7 @@ const createResourceBank = (): Record<ResourceType, number> => ({
 
 const generateId = (prefix: string) => `${prefix}-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 
-const createInitialState = (): GameState => ({
+const createInitialState = (): GameState & { isHydrated: boolean } => ({
   resources: createResourceBank(),
   buildings: INITIAL_BUILDINGS,
   technologies: INITIAL_TECHNOLOGIES,
@@ -39,23 +42,8 @@ const createInitialState = (): GameState => ({
   threatLevel: 12,
   galaxySeed: 'local-spiral-7',
   hostMode: 'SOLO',
+  isHydrated: false,
 });
-
-const loadPersistedState = (): GameState => {
-  if (typeof localStorage === 'undefined') return createInitialState();
-
-  const rawSave = localStorage.getItem(SAVE_KEY);
-  if (!rawSave) return createInitialState();
-
-  try {
-    const parsed = JSON.parse(rawSave) as Partial<GameState>;
-    const merged = { ...createInitialState(), ...parsed };
-    const validated = GameStateSchema.safeParse(merged);
-    return validated.success ? validated.data : createInitialState();
-  } catch {
-    return createInitialState();
-  }
-};
 
 const applyResourceDelta = (resources: Record<ResourceType, number>, delta: ResourceMap, multiplier = 1) => {
   Object.entries(delta).forEach(([res, amount]) => {
@@ -75,6 +63,7 @@ interface OfflineReport {
 }
 
 interface GameActions {
+  initializeStore: () => Promise<void>;
   addResource: (type: ResourceType, amount: number) => void;
   buildBuilding: (building: Building) => void;
   purchaseBuilding: (buildingTemplate: Omit<Building, 'id'>) => boolean;
@@ -83,11 +72,59 @@ interface GameActions {
   ingestPacket: (packet: MultiplayerPacket) => void;
   setHostMode: (mode: GameState['hostMode']) => void;
   sendChatMessage: (message: string, channel?: ChatMessage['channel']) => void;
-  saveGame: () => void;
+  saveGame: () => Promise<void>;
 }
 
-export const useGameStore = create<GameState & GameActions>((set, get) => ({
-  ...loadPersistedState(),
+export const useGameStore = create<GameState & { isHydrated: boolean } & GameActions>((set, get) => ({
+  ...createInitialState(),
+
+  initializeStore: async () => {
+    let savedState: Partial<GameState> | null = null;
+
+    // 1. Try to load from IndexedDB
+    try {
+      const rawIdbSave = await idbGet<string>(SAVE_KEY);
+      if (rawIdbSave) {
+        savedState = JSON.parse(rawIdbSave);
+      } else {
+        // 2. Try to load from Backup in IndexedDB (Compressed)
+        const compressedBackup = await idbGet<Uint8Array>(BACKUP_KEY);
+        if (compressedBackup) {
+          const decompressed = await decompressState(compressedBackup);
+          savedState = JSON.parse(decompressed);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load from IndexedDB', e);
+    }
+
+    // 3. Fallback/Migration: Try to load from localStorage
+    if (!savedState && typeof localStorage !== 'undefined') {
+      const rawLocalStorage = localStorage.getItem(SAVE_KEY);
+      if (rawLocalStorage) {
+        try {
+          savedState = JSON.parse(rawLocalStorage);
+          // Migrate to IndexedDB immediately if found
+          await idbSet(SAVE_KEY, rawLocalStorage);
+          const compressed = await compressState(rawLocalStorage);
+          await idbSet(BACKUP_KEY, compressed);
+        } catch (e) {
+          console.error('Failed to parse localStorage save', e);
+        }
+      }
+    }
+
+    if (savedState) {
+      const merged = { ...createInitialState(), ...savedState, isHydrated: true };
+      const validated = GameStateSchema.safeParse(merged);
+      if (validated.success) {
+        set(validated.data as any);
+        return;
+      }
+    }
+
+    set({ isHydrated: true });
+  },
 
   addResource: (type, amount) => set((state) => ({
     resources: { ...state.resources, [type]: Math.max(0, (state.resources[type] || 0) + amount) },
@@ -250,11 +287,9 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
     ],
   })),
 
-  saveGame: () => {
+  saveGame: async () => {
     const state = get();
-    if (typeof localStorage === 'undefined') return;
-
-    localStorage.setItem(SAVE_KEY, JSON.stringify({
+    const snapshot = {
       resources: state.resources,
       buildings: state.buildings,
       technologies: state.technologies,
@@ -267,6 +302,23 @@ export const useGameStore = create<GameState & GameActions>((set, get) => ({
       threatLevel: state.threatLevel,
       galaxySeed: state.galaxySeed,
       hostMode: state.hostMode,
-    }));
+    };
+
+    const rawSave = JSON.stringify(snapshot);
+
+    try {
+      // Main save
+      await idbSet(SAVE_KEY, rawSave);
+
+      // Compressed backup
+      const compressed = await compressState(rawSave);
+      await idbSet(BACKUP_KEY, compressed);
+    } catch (e) {
+      console.error('Failed to save to IndexedDB', e);
+      // Fallback to localStorage if IDB fails
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(SAVE_KEY, rawSave);
+      }
+    }
   },
 }));

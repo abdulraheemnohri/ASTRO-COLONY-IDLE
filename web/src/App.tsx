@@ -4,6 +4,7 @@ import { HUD } from './components/HUD';
 import { AITerminal } from './components/AITerminal';
 import { useGameStore } from './store/useGameStore';
 import { useEventStore } from './store/useEventStore';
+import { Loader2 } from 'lucide-react';
 
 const rotatingEvents = [
   {
@@ -30,11 +31,19 @@ const rotatingEvents = [
 ];
 
 function App() {
+  const isHydrated = useGameStore((state) => state.isHydrated);
+  const initializeStore = useGameStore((state) => state.initializeStore);
   const calculateOfflineProgress = useGameStore((state) => state.calculateOfflineProgress);
   const removeExpiredEvents = useEventStore((state) => state.removeExpiredEvents);
   const triggerEvent = useEventStore((state) => state.triggerEvent);
 
   useEffect(() => {
+    initializeStore();
+  }, [initializeStore]);
+
+  useEffect(() => {
+    if (!isHydrated) return;
+
     const report = calculateOfflineProgress();
     if (report.eventName) {
       triggerEvent({
@@ -67,7 +76,16 @@ function App() {
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [calculateOfflineProgress, removeExpiredEvents, triggerEvent]);
+  }, [isHydrated, calculateOfflineProgress, removeExpiredEvents, triggerEvent]);
+
+  if (!isHydrated) {
+    return (
+      <div className="w-screen h-screen bg-black flex flex-col items-center justify-center text-cyan-500 font-mono">
+        <Loader2 size={48} className="animate-spin mb-4" />
+        <div className="text-xl tracking-[0.2em] uppercase animate-pulse">Initializing Colony Data...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-black">
