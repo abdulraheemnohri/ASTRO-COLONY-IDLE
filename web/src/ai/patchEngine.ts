@@ -1,9 +1,11 @@
 import { useGameStore } from '../store/useGameStore';
 import type { Building, ResourceMap, ResourceType, Technology } from '../../../shared/schemas/game';
 import { BuildingSchema, TechnologySchema } from '../../../shared/schemas/game';
+import { LocalNotifications } from '@capacitor/local-notifications';
+import { Capacitor } from '@capacitor/core';
 
 export interface AIPatch {
-  type: 'ADD_BUILDING' | 'ADD_TECHNOLOGY' | 'UPDATE_RESOURCES' | 'UPGRADE_BUILDING' | 'GALAXY_MESSAGE';
+  type: 'ADD_BUILDING' | 'ADD_TECHNOLOGY' | 'UPDATE_RESOURCES' | 'UPGRADE_BUILDING' | 'GALAXY_MESSAGE' | 'RESEARCH_BOOST';
   payload: unknown;
 }
 
@@ -49,11 +51,13 @@ export const applyAIPatch = (patch: AIPatch): PatchValidationResult => {
   switch (patch.type) {
     case 'ADD_BUILDING':
       store.buildBuilding(patch.payload as Building);
+      notifyAIChange('New Building Design', `AI discovered blueprints for ${(patch.payload as Building).name}`);
       break;
     case 'ADD_TECHNOLOGY':
       useGameStore.setState((state) => ({
         technologies: [...state.technologies, patch.payload as Technology],
       }));
+      notifyAIChange('New Research Path', `AI evolved a new technology: ${(patch.payload as Technology).name}`);
       break;
     case 'UPDATE_RESOURCES':
       Object.entries(patch.payload as ResourceMap).forEach(([res, amount]) => {
@@ -66,7 +70,16 @@ export const applyAIPatch = (patch: AIPatch): PatchValidationResult => {
         building.id === payload.id ? { ...building, level: building.level + 1 } : building,
       );
       useGameStore.setState({ buildings: updatedBuildings });
+      notifyAIChange('Facility Upgrade', 'AI autonomous drones improved a local facility.');
       break;
+    }
+    case 'RESEARCH_BOOST': {
+        const payload = patch.payload as { techId: string, amount: number };
+        const updatedTechs = store.technologies.map((tech) =>
+          tech.id === payload.techId ? { ...tech, progress: Math.min(100, (tech.progress || 0) + payload.amount) } : tech
+        );
+        useGameStore.setState({ technologies: updatedTechs });
+        break;
     }
     case 'GALAXY_MESSAGE':
       store.sendChatMessage(String((patch.payload as { message?: string }).message || 'AI generated a quiet anomaly.'), 'AI');
@@ -76,4 +89,16 @@ export const applyAIPatch = (patch: AIPatch): PatchValidationResult => {
   }
 
   return validation;
+};
+
+const notifyAIChange = (title: string, body: string) => {
+  if (Capacitor.isNativePlatform()) {
+    LocalNotifications.schedule({
+      notifications: [{
+        title,
+        body,
+        id: Math.floor(Math.random() * 100000),
+      }]
+    });
+  }
 };

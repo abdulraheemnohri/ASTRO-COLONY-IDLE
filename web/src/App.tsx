@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Scene } from './components/Scene';
 import { HUD } from './components/HUD';
 import { AITerminalWrapper as AITerminal } from './components/AITerminalWrapper';
@@ -9,6 +9,7 @@ import { Capacitor } from '@capacitor/core';
 import { StatusBar, Style } from '@capacitor/status-bar';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { App as CapApp } from '@capacitor/app';
+import { Device } from '@capacitor/device';
 import { localDiscovery } from './store/localDiscovery';
 
 const rotatingEvents = [
@@ -42,6 +43,8 @@ function App() {
   const removeExpiredEvents = useEventStore((state) => state.removeExpiredEvents);
   const triggerEvent = useEventStore((state) => state.triggerEvent);
 
+  const [isLowPowerMode, setIsLowPowerMode] = useState(false);
+
   useEffect(() => {
     initializeStore();
     localDiscovery.startDiscovery();
@@ -50,14 +53,19 @@ function App() {
     if (Capacitor.isNativePlatform()) {
       StatusBar.hide();
       StatusBar.setStyle({ style: Style.Dark });
-
       LocalNotifications.requestPermissions();
+
+      // Battery / Power Optimization
+      Device.getBatteryInfo().then(info => {
+        if ((info.batteryLevel || 1) < 0.2 || info.isCharging === false) {
+           // Proactive optimization for low battery
+           setIsLowPowerMode(true);
+        }
+      });
     }
 
-    // Background simulation hooks
     const appStateChangeListener = CapApp.addListener('appStateChange', ({ isActive }) => {
       if (isActive) {
-        // App became active, calculate progress
         const report = useGameStore.getState().calculateOfflineProgress();
         if (report.eventName) {
           triggerEvent({
@@ -69,7 +77,6 @@ function App() {
           });
         }
       } else {
-        // App went to background, save state
         useGameStore.getState().saveGame();
       }
     });
@@ -105,8 +112,12 @@ function App() {
     }
 
     const interval = setInterval(() => {
+      // Throttle logic for low power
+      const shouldSave = Math.random() < (isLowPowerMode ? 0.2 : 1.0);
+
       const tickReport = useGameStore.getState().calculateOfflineProgress();
-      useGameStore.getState().saveGame();
+      if (shouldSave) useGameStore.getState().saveGame();
+
       removeExpiredEvents();
 
       if (tickReport.eventName) {
@@ -144,10 +155,10 @@ function App() {
           });
         }
       }
-    }, 5000);
+    }, isLowPowerMode ? 15000 : 5000);
 
     return () => clearInterval(interval);
-  }, [isHydrated, calculateOfflineProgress, removeExpiredEvents, triggerEvent]);
+  }, [isHydrated, calculateOfflineProgress, removeExpiredEvents, triggerEvent, isLowPowerMode]);
 
   if (!isHydrated) {
     return (
@@ -160,10 +171,17 @@ function App() {
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-black">
-      <Scene />
+      <Scene lowPower={isLowPowerMode} />
       <HUD />
       <AITerminal />
       <EventOverlay />
+
+      {/* Battery Optimization Banner */}
+      {isLowPowerMode && (
+        <div className="fixed top-0 left-0 w-full bg-yellow-500/80 text-black text-[10px] font-bold text-center py-1 z-[100] uppercase tracking-widest pointer-events-none">
+          Low Power Mode Active: Simulation frequency reduced
+        </div>
+      )}
     </div>
   );
 }
@@ -173,7 +191,7 @@ const EventOverlay = () => {
   if (activeEvents.length === 0) return null;
 
   return (
-    <div className="fixed top-24 left-1/2 -translate-x-1/2 z-30 pointer-events-none space-y-2">
+    <div className="fixed top-28 left-1/2 -translate-x-1/2 z-30 pointer-events-none space-y-2">
       {activeEvents.map((event) => (
         <div key={event.id} className="bg-red-500/20 border border-red-500 backdrop-blur-md p-4 rounded-lg animate-pulse min-w-[320px]">
           <h3 className="text-red-400 font-bold uppercase text-xs">Galaxy Event: {event.name}</h3>

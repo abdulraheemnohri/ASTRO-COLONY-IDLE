@@ -1,7 +1,7 @@
 import { useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
-import type { Group, Mesh } from 'three';
-import { BackSide } from 'three';
+import type { Group, InstancedMesh, Mesh } from 'three';
+import { BackSide, Matrix4, Vector3, Quaternion } from 'three';
 import { useGameStore } from '../store/useGameStore';
 
 const seededNoise = (index: number) => {
@@ -10,15 +10,15 @@ const seededNoise = (index: number) => {
 };
 
 export const Galaxy = () => {
-  const particlesCount = 6000;
+  const particlesCount = 8000;
   const positions = useMemo(() => {
     const pos = new Float32Array(particlesCount * 3);
     for (let i = 0; i < particlesCount; i += 1) {
-      const radius = seededNoise(i) * 120;
-      const arm = (i % 4) * Math.PI * 0.5;
+      const radius = seededNoise(i) * 140;
+      const arm = (i % 5) * Math.PI * 0.4;
       const angle = arm + radius * 0.055 + (seededNoise(i + 9000) - 0.5) * 0.8;
       pos[i * 3] = Math.cos(angle) * radius;
-      pos[i * 3 + 1] = (seededNoise(i + 18000) - 0.5) * 16;
+      pos[i * 3 + 1] = (seededNoise(i + 18000) - 0.5) * 18;
       pos[i * 3 + 2] = Math.sin(angle) * radius;
     }
     return pos;
@@ -29,7 +29,7 @@ export const Galaxy = () => {
       <bufferGeometry>
         <bufferAttribute attach="attributes-position" args={[positions, 3]} />
       </bufferGeometry>
-      <pointsMaterial size={0.12} color="#aeefff" transparent opacity={0.45} sizeAttenuation />
+      <pointsMaterial size={0.15} color="#aeefff" transparent opacity={0.4} sizeAttenuation />
     </points>
   );
 };
@@ -37,92 +37,130 @@ export const Galaxy = () => {
 export const Planet = ({ position, color, size }: { position: [number, number, number]; color: string; size: number }) => {
   const buildings = useGameStore((state) => state.buildings);
   const groupRef = useRef<Group>(null);
+  const instancedRef = useRef<InstancedMesh>(null);
 
-  useFrame((_, delta) => {
+  useFrame((state, delta) => {
     if (groupRef.current) groupRef.current.rotation.y += delta * 0.08;
+
+    if (instancedRef.current && buildings.length > 0) {
+      const time = state.clock.getElapsedTime();
+      const matrix = new Matrix4();
+      const pos = new Vector3();
+      const quat = new Quaternion();
+      const scale = new Vector3(0.25, 0.25, 0.25);
+
+      buildings.forEach((_, idx) => {
+        const phi = Math.acos(-1 + (2 * idx) / Math.max(buildings.length, 1));
+        const theta = Math.sqrt(buildings.length * Math.PI) * phi + time * 0.1;
+        const orbitRadius = size + 1.2;
+        pos.set(
+          orbitRadius * Math.sin(phi) * Math.cos(theta),
+          orbitRadius * Math.sin(phi) * Math.sin(theta),
+          orbitRadius * Math.cos(phi)
+        );
+        quat.setFromAxisAngle(new Vector3(0, 1, 0), time * 0.5 + idx);
+        matrix.compose(pos, quat, scale);
+        instancedRef.current!.setMatrixAt(idx, matrix);
+      });
+      instancedRef.current.instanceMatrix.needsUpdate = true;
+    }
   });
 
   return (
     <group ref={groupRef} position={position}>
       <mesh>
         <sphereGeometry args={[size, 64, 64]} />
-        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.1} metalness={0.8} roughness={0.2} />
+        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.15} metalness={0.9} roughness={0.1} />
       </mesh>
 
       <mesh>
-        <sphereGeometry args={[size * 1.05, 32, 32]} />
-        <meshStandardMaterial color={color} transparent opacity={0.1} side={BackSide} />
+        <sphereGeometry args={[size * 1.08, 32, 32]} />
+        <meshStandardMaterial color={color} transparent opacity={0.12} side={BackSide} />
       </mesh>
 
-      {buildings.map((building, idx) => {
-        const phi = Math.acos(-1 + (2 * idx) / Math.max(buildings.length, 1));
-        const theta = Math.sqrt(buildings.length * Math.PI) * phi;
-        const orbitRadius = size + 1.5;
-        const bx = orbitRadius * Math.sin(phi) * Math.cos(theta);
-        const by = orbitRadius * Math.sin(phi) * Math.sin(theta);
-        const bz = orbitRadius * Math.cos(phi);
-
-        return (
-          <mesh key={building.id} position={[bx, by, bz]}>
-            <boxGeometry args={[0.3, 0.3, 0.3]} />
-            <meshStandardMaterial color="#00ffff" emissive="#00ffff" emissiveIntensity={0.5} />
-          </mesh>
-        );
-      })}
+      <instancedMesh ref={instancedRef} args={[undefined, undefined, 200]}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color="#00ffff" emissive="#00ffff" emissiveIntensity={0.8} />
+      </instancedMesh>
     </group>
   );
 };
 
 export const AsteroidBelt = () => {
-  const asteroids = useMemo(
-    () => Array.from({ length: 90 }, (_, index) => {
-      const angle = (index / 90) * Math.PI * 2;
-      const radius = 23 + Math.sin(index * 12.9898) * 3;
-      return {
-        id: `asteroid-${index}`,
-        position: [Math.cos(angle) * radius, Math.sin(index) * 0.8, Math.sin(angle) * radius] as [number, number, number],
-        scale: 0.08 + (index % 7) * 0.025,
-      };
-    }),
-    [],
-  );
+  const count = 400;
+  const meshRef = useRef<InstancedMesh>(null);
+
+  const dummy = useMemo(() => new Matrix4(), []);
+  const pos = useMemo(() => new Vector3(), []);
+  const rot = useMemo(() => new Quaternion(), []);
+  const sca = useMemo(() => new Vector3(), []);
+
+  useFrame((state) => {
+    if (!meshRef.current) return;
+    const time = state.clock.getElapsedTime();
+
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2 + time * 0.02;
+      const radius = 26 + Math.sin(i * 0.5) * 4;
+      pos.set(Math.cos(angle) * radius, Math.sin(i + time * 0.1) * 1.2, Math.sin(angle) * radius);
+      rot.setFromAxisAngle(new Vector3(1, 1, 1).normalize(), time * 0.5 + i);
+      const scaleValue = 0.05 + seededNoise(i) * 0.12;
+      sca.set(scaleValue, scaleValue, scaleValue);
+
+      dummy.compose(pos, rot, sca);
+      meshRef.current.setMatrixAt(i, dummy);
+    }
+    meshRef.current.instanceMatrix.needsUpdate = true;
+  });
 
   return (
-    <group>
-      {asteroids.map((asteroid) => (
-        <mesh key={asteroid.id} position={asteroid.position} scale={asteroid.scale}>
-          <dodecahedronGeometry args={[1, 0]} />
-          <meshStandardMaterial color="#8a8177" roughness={0.9} />
-        </mesh>
-      ))}
-    </group>
+    <instancedMesh ref={meshRef} args={[undefined, undefined, count]}>
+      <dodecahedronGeometry args={[1, 0]} />
+      <meshStandardMaterial color="#8a8177" roughness={0.9} />
+    </instancedMesh>
   );
 };
 
 export const Wormhole = ({ position }: { position: [number, number, number] }) => {
   const ref = useRef<Mesh>(null);
 
-  useFrame((_, delta) => {
-    if (ref.current) ref.current.rotation.z += delta * 0.9;
+  useFrame((state) => {
+    if (ref.current) {
+      ref.current.rotation.z += 0.02;
+      const pulse = 1 + Math.sin(state.clock.getElapsedTime() * 2) * 0.05;
+      ref.current.scale.set(pulse, pulse, pulse);
+    }
   });
 
   return (
     <mesh ref={ref} position={position}>
-      <torusGeometry args={[2.4, 0.08, 16, 96]} />
-      <meshStandardMaterial color="#d946ef" emissive="#d946ef" emissiveIntensity={1.2} />
+      <torusGeometry args={[2.8, 0.12, 16, 100]} />
+      <meshStandardMaterial color="#d946ef" emissive="#d946ef" emissiveIntensity={2} />
     </mesh>
   );
 };
 
-export const BlackHole = ({ position }: { position: [number, number, number] }) => (
-  <group position={position}>
-    <mesh>
-      <sphereGeometry args={[1.2, 32, 32]} />
-      <meshStandardMaterial color="#020617" emissive="#1e1b4b" emissiveIntensity={0.4} />
-    </mesh>
-    <mesh rotation={[Math.PI / 2.4, 0, 0]}>
-      <torusGeometry args={[2.1, 0.05, 12, 96]} />
-      <meshStandardMaterial color="#f97316" emissive="#f97316" emissiveIntensity={1} />
-    </mesh>
-  </group>
-);
+export const BlackHole = ({ position }: { position: [number, number, number] }) => {
+  const diskRef = useRef<Mesh>(null);
+
+  useFrame(() => {
+    if (diskRef.current) diskRef.current.rotation.z -= 0.01;
+  });
+
+  return (
+    <group position={position}>
+      <mesh>
+        <sphereGeometry args={[1.5, 32, 32]} />
+        <meshStandardMaterial color="#020617" />
+      </mesh>
+      <mesh ref={diskRef} rotation={[Math.PI / 2.2, 0, 0]}>
+        <torusGeometry args={[2.5, 0.08, 12, 128]} />
+        <meshStandardMaterial color="#f97316" emissive="#f97316" emissiveIntensity={3} transparent opacity={0.8} />
+      </mesh>
+      <mesh>
+        <sphereGeometry args={[1.8, 32, 32]} />
+        <meshStandardMaterial color="#f97316" transparent opacity={0.1} side={BackSide} />
+      </mesh>
+    </group>
+  );
+};

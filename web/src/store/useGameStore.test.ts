@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { useGameStore } from './useGameStore';
+import type { Building } from '../../../shared/schemas/game';
 
 describe('useGameStore Logic', () => {
   beforeEach(() => {
@@ -20,6 +21,9 @@ describe('useGameStore Logic', () => {
       colonyName: 'Astro Colony Alpha',
       drones: 0,
       shields: 40,
+      maxShields: 100,
+      sciencePoints: 0,
+      militaryRank: 1,
       threatLevel: 12,
       galaxySeed: 'test-seed',
       hostMode: 'SOLO',
@@ -28,6 +32,7 @@ describe('useGameStore Logic', () => {
           id: 'solar-hub-001',
           name: 'Solar Hub',
           type: 'ENERGY_GENERATOR',
+          category: 'PRODUCTION',
           level: 1,
           production: { ENERGY: 10 },
           cost: { METAL: 50 },
@@ -37,6 +42,7 @@ describe('useGameStore Logic', () => {
           id: 'mining-station-001',
           name: 'Mining Station',
           type: 'METAL_EXTRACTOR',
+          category: 'PRODUCTION',
           level: 1,
           production: { METAL: 5 },
           consumption: { ENERGY: 2 },
@@ -66,9 +72,10 @@ describe('useGameStore Logic', () => {
 
   it('should allow purchasing a building if resources are sufficient', () => {
     const { purchaseBuilding } = useGameStore.getState();
-    const template = {
+    const template: Omit<Building, 'id'> = {
       name: 'New Hub',
       type: 'HUB',
+      category: 'PRODUCTION',
       level: 1,
       cost: { METAL: 100 },
       description: 'Test',
@@ -82,9 +89,10 @@ describe('useGameStore Logic', () => {
 
   it('should fail to purchase a building if resources are insufficient', () => {
     const { purchaseBuilding } = useGameStore.getState();
-    const template = {
+    const template: Omit<Building, 'id'> = {
       name: 'Expensive Hub',
       type: 'HUB',
+      category: 'PRODUCTION',
       level: 1,
       cost: { METAL: 1000 },
       description: 'Too expensive',
