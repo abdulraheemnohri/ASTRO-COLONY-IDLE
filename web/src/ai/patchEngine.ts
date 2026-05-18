@@ -1,11 +1,11 @@
 import { useGameStore } from '../store/useGameStore';
-import type { Building, ResourceMap, ResourceType, Technology } from '../../../shared/schemas/game';
-import { BuildingSchema, TechnologySchema } from '../../../shared/schemas/game';
+import type { Building, ResourceMap, ResourceType, Technology, Mission } from '../../../shared/schemas/game';
+import { BuildingSchema, TechnologySchema, MissionSchema } from '../../../shared/schemas/game';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
 
 export interface AIPatch {
-  type: 'ADD_BUILDING' | 'ADD_TECHNOLOGY' | 'UPDATE_RESOURCES' | 'UPGRADE_BUILDING' | 'GALAXY_MESSAGE' | 'RESEARCH_BOOST';
+  type: 'ADD_BUILDING' | 'ADD_TECHNOLOGY' | 'UPDATE_RESOURCES' | 'UPGRADE_BUILDING' | 'GALAXY_MESSAGE' | 'RESEARCH_BOOST' | 'ADD_MISSION';
   payload: unknown;
 }
 
@@ -30,6 +30,13 @@ export const validateAIPatch = (patch: AIPatch): PatchValidationResult => {
     return parsed.success
       ? { accepted: true, reason: 'Technology definition passed schema validation.' }
       : { accepted: false, reason: 'Technology definition failed schema validation.' };
+  }
+
+  if (patch.type === 'ADD_MISSION') {
+    const parsed = MissionSchema.safeParse(patch.payload);
+    return parsed.success
+      ? { accepted: true, reason: 'Mission objective passed schema validation.' }
+      : { accepted: false, reason: 'Mission objective failed schema validation.' };
   }
 
   if (patch.type === 'UPDATE_RESOURCES') {
@@ -59,6 +66,12 @@ export const applyAIPatch = (patch: AIPatch): PatchValidationResult => {
       }));
       notifyAIChange('New Research Path', `AI evolved a new technology: ${(patch.payload as Technology).name}`);
       break;
+    case 'ADD_MISSION':
+      useGameStore.setState((state) => ({
+        missions: [...state.missions, patch.payload as Mission],
+      }));
+      notifyAIChange('New Objective', `AI Governor issued a priority mission: ${(patch.payload as Mission).title}`);
+      break;
     case 'UPDATE_RESOURCES':
       Object.entries(patch.payload as ResourceMap).forEach(([res, amount]) => {
         store.addResource(res as ResourceType, amount || 0);
@@ -67,7 +80,7 @@ export const applyAIPatch = (patch: AIPatch): PatchValidationResult => {
     case 'UPGRADE_BUILDING': {
       const payload = patch.payload as { id: string };
       const updatedBuildings = store.buildings.map((building) =>
-        building.id === payload.id ? { ...building, level: building.level + 1 } : building,
+        building.id === payload.id ? { ...building, level: (building.level || 1) + 1 } : building,
       );
       useGameStore.setState({ buildings: updatedBuildings });
       notifyAIChange('Facility Upgrade', 'AI autonomous drones improved a local facility.');

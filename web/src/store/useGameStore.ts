@@ -1,15 +1,16 @@
 import { create } from 'zustand';
 import { get as idbGet, set as idbSet } from 'idb-keyval';
-import type { Building, ChatMessage, GameState, MultiplayerPacket, ResourceMap, ResourceType } from '../../../shared/schemas/game';
+import type { Building, GameState, ResourceMap, ResourceType, GameSettings } from '../../../shared/schemas/game';
 import { Capacitor } from "@capacitor/core";
 import { sqlitePersistence } from "./sqlitePersistence";
 import { GameStateSchema } from '../../../shared/schemas/game';
 import { INITIAL_BUILDINGS, INITIAL_TECHNOLOGIES } from '../../../shared/constants/buildings';
-import { compressState, decompressState } from './persistenceUtils';
+import { compressState } from './persistenceUtils';
 
 const SAVE_KEY = 'astro_colony_save';
 const BACKUP_KEY = 'astro_colony_backup';
 const MAX_OFFLINE_SECONDS = 60 * 60 * 24 * 7;
+const TICK_INTERVAL_MS = 100;
 
 const createResourceBank = (): Record<ResourceType, number> => ({
   ENERGY: 100,
@@ -19,43 +20,40 @@ const createResourceBank = (): Record<ResourceType, number> => ({
   DARK_MATTER: 0,
   QUANTUM_DUST: 0,
   ALIEN_BIOMASS: 0,
+  SCIENCE_POINTS: 0,
 });
 
-const generateId = (prefix: string) => `${prefix}-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+export const generateId = (prefix: string) => `${prefix}-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 
-const createInitialState = (): GameState & { isHydrated: boolean } => ({
+const createInitialState = (): GameState & { isHydrated: boolean; lastTickTime: number } => ({
   resources: createResourceBank(),
+  planets: [],
   buildings: INITIAL_BUILDINGS,
+  units: [],
   technologies: INITIAL_TECHNOLOGIES,
-  chatLog: [
-    {
-      id: 'welcome-transmission',
-      playerId: 'ai-governor',
-      channel: 'AI',
-      message: 'AI Governor online. Offline colony simulation armed for local-first expansion.',
-      timestamp: Date.now(),
-    },
-  ],
+  missions: [],
+  chatLog: [],
   playerId: generateId('player'),
   lastSaveTime: Date.now(),
+  lastTickTime: Date.now(),
   colonyName: 'Astro Colony Alpha',
   drones: 1,
-  shields: 40, maxShields: 100, sciencePoints: 0, militaryRank: 1,
+  shields: 40,
+  maxShields: 100,
   threatLevel: 12,
   galaxySeed: 'local-spiral-7',
   hostMode: 'SOLO',
+  sciencePoints: 0,
+  militaryRank: 1,
   isHydrated: false,
+  settings: {
+    graphicsQuality: 'MEDIUM',
+    thermalProtection: true,
+    soundVolume: 0.5,
+    notificationsEnabled: true,
+    simulationSpeed: 1,
+  },
 });
-
-const applyResourceDelta = (resources: Record<ResourceType, number>, delta: ResourceMap, multiplier = 1) => {
-  Object.entries(delta).forEach(([res, amount]) => {
-    const key = res as ResourceType;
-    resources[key] = Math.max(0, (resources[key] || 0) + (amount || 0) * multiplier);
-  });
-};
-
-const canAfford = (resources: Record<ResourceType, number>, cost: ResourceMap) =>
-  Object.entries(cost).every(([res, amount]) => (resources[res as ResourceType] || 0) >= (amount || 0));
 
 interface OfflineReport {
   elapsedSeconds: number;
@@ -66,22 +64,24 @@ interface OfflineReport {
 
 interface GameActions {
   initializeStore: () => Promise<void>;
-  addResource: (type: ResourceType, amount: number) => void;
-  buildBuilding: (building: Building) => void;
-  purchaseBuilding: (buildingTemplate: Omit<Building, 'id'>) => boolean;
+  tick: () => void;
+  updateSettings: (settings: Partial<GameSettings>) => void;
+  purchaseBuilding: (template: Omit<Building, 'id'>) => boolean;
   unlockTechnology: (techId: string) => boolean;
   calculateOfflineProgress: () => OfflineReport;
-  ingestPacket: (packet: MultiplayerPacket) => void;
-  setHostMode: (mode: GameState['hostMode']) => void;
-  sendChatMessage: (message: string, channel?: ChatMessage['channel']) => void;
   saveGame: () => Promise<void>;
+  addResource: (type: ResourceType, amount: number) => void;
+  sendChatMessage: (message: string, channel?: string) => void;
+  setHostMode: (mode: GameState['hostMode']) => void;
+  buildBuilding: (building: Building) => void;
+  resolveCombat: (enemyAttack: number) => { damageDealt: number; resolved: boolean };
+  completeMission: (missionId: string) => void;
 }
 
-export const useGameStore = create<GameState & { isHydrated: boolean } & GameActions>((set, get) => ({
+export const useGameStore = create<GameState & { isHydrated: boolean; lastTickTime: number } & GameActions>((set, get) => ({
   ...createInitialState(),
 
   initializeStore: async () => {
-
     let savedState: Partial<GameState> | null = null;
     const isNative = Capacitor.isNativePlatform();
 
@@ -89,53 +89,15 @@ export const useGameStore = create<GameState & { isHydrated: boolean } & GameAct
       try {
         await sqlitePersistence.initialize();
         const sqliteSave = await sqlitePersistence.get(SAVE_KEY);
-        if (sqliteSave) {
-          savedState = JSON.parse(sqliteSave);
-        } else {
-          const sqliteBackup = await sqlitePersistence.getLatestBackup();
-          if (sqliteBackup) {
-            const decompressed = await decompressState(sqliteBackup);
-            savedState = JSON.parse(decompressed);
-          }
-        }
-      } catch (e) {
-        console.error('Failed to load from SQLite', e);
-      }
+        if (sqliteSave) savedState = JSON.parse(sqliteSave);
+      } catch (e) { console.error('SQLite load error', e); }
     }
 
-    // 1. Try to load from IndexedDB
     if (!savedState) {
       try {
         const rawIdbSave = await idbGet<string>(SAVE_KEY);
-        if (rawIdbSave) {
-          savedState = JSON.parse(rawIdbSave);
-        } else {
-          // 2. Try to load from Backup in IndexedDB (Compressed)
-          const compressedBackup = await idbGet<Uint8Array>(BACKUP_KEY);
-          if (compressedBackup) {
-            const decompressed = await decompressState(compressedBackup);
-            savedState = JSON.parse(decompressed);
-          }
-        }
-      } catch (e) {
-        console.error('Failed to load from IndexedDB', e);
-      }
-    }
-
-    // 3. Fallback/Migration: Try to load from localStorage
-    if (!savedState && typeof localStorage !== 'undefined') {
-      const rawLocalStorage = localStorage.getItem(SAVE_KEY);
-      if (rawLocalStorage) {
-        try {
-          savedState = JSON.parse(rawLocalStorage);
-          // Migrate to IndexedDB immediately if found
-          await idbSet(SAVE_KEY, rawLocalStorage);
-          const compressed = await compressState(rawLocalStorage);
-          await idbSet(BACKUP_KEY, compressed);
-        } catch (e) {
-          console.error('Failed to parse localStorage save', e);
-        }
-      }
+        if (rawIdbSave) savedState = JSON.parse(rawIdbSave);
+      } catch (e) { console.error('IDB load error', e); }
     }
 
     if (savedState) {
@@ -143,214 +105,183 @@ export const useGameStore = create<GameState & { isHydrated: boolean } & GameAct
       const validated = GameStateSchema.safeParse(merged);
       if (validated.success) {
         set(validated.data as any);
-        // Process offline progress immediately after hydration
         get().calculateOfflineProgress();
         return;
       }
     }
-
     set({ isHydrated: true });
   },
 
+  tick: () => {
+    const state = get();
+    const now = Date.now();
+    const deltaMs = now - state.lastTickTime;
+    if (deltaMs < TICK_INTERVAL_MS) return;
+
+    const tickMultiplier = (deltaMs / 1000) * state.settings.simulationSpeed;
+    const newResources = { ...state.resources };
+
+    state.buildings.forEach((b) => {
+      if (b.production) {
+        Object.entries(b.production).forEach(([res, val]) => {
+          newResources[res as ResourceType] = (newResources[res as ResourceType] || 0) + (val || 0) * tickMultiplier * (b.efficiency || 1);
+        });
+      }
+      if (b.consumption) {
+        Object.entries(b.consumption).forEach(([res, val]) => {
+          newResources[res as ResourceType] = Math.max(0, (newResources[res as ResourceType] || 0) - (val || 0) * tickMultiplier);
+        });
+      }
+    });
+
+    set({ resources: newResources, lastTickTime: now });
+  },
+
+  resolveCombat: (enemyAttack) => {
+    const state = get();
+    let remainingAttack = enemyAttack;
+    let newShields = state.shields;
+
+    const shieldDmg = Math.min(newShields, remainingAttack);
+    newShields -= shieldDmg;
+    remainingAttack -= shieldDmg;
+
+    let totalDmg = 0;
+    if (remainingAttack > 0) {
+        const buildingDmg = Math.min(100, remainingAttack);
+        totalDmg = buildingDmg;
+    }
+
+    set({ shields: newShields });
+    return { damageDealt: totalDmg, resolved: remainingAttack <= 0 };
+  },
+
+  completeMission: (missionId) => {
+    const state = get();
+    const mission = state.missions.find(m => m.id === missionId);
+    if (!mission || mission.completed) return;
+
+    const newResources = { ...state.resources };
+    Object.entries(mission.reward).forEach(([res, amt]) => {
+      newResources[res as ResourceType] = (newResources[res as ResourceType] || 0) + (amt || 0);
+    });
+
+    set({
+      resources: newResources,
+      missions: state.missions.map(m => m.id === missionId ? { ...m, completed: true } : m)
+    });
+  },
+
+  updateSettings: (newSettings) => set((state) => ({ settings: { ...state.settings, ...newSettings } })),
+
   addResource: (type, amount) => set((state) => ({
-    resources: { ...state.resources, [type]: Math.max(0, (state.resources[type] || 0) + amount) },
+    resources: { ...state.resources, [type]: Math.max(0, (state.resources[type] || 0) + amount) }
   })),
 
   buildBuilding: (building) => set((state) => ({
-    buildings: [...state.buildings, building],
+    buildings: [...state.buildings, building]
   })),
 
   purchaseBuilding: (template) => {
-    const { resources } = get();
-    if (!canAfford(resources, template.cost)) return false;
+    const state = get();
+    const canAfford = Object.entries(template.cost).every(([res, amt]) => (state.resources[res as ResourceType] || 0) >= (amt || 0));
+    if (!canAfford) return false;
 
-    const newResources = { ...resources };
-    applyResourceDelta(newResources, template.cost, -1);
+    const newResources = { ...state.resources };
+    Object.entries(template.cost).forEach(([res, amt]) => {
+      newResources[res as ResourceType] -= (amt || 0);
+    });
 
-    const newBuilding: Building = {
-      ...template,
-      id: generateId(template.type.toLowerCase()),
-    };
-
-    set((state) => ({
-      resources: newResources,
-      buildings: [...state.buildings, newBuilding],
-      drones: state.drones + (template.type === 'DRONE_FACTORY' ? 1 : 0),
-    }));
+    const newBuilding: Building = { ...template, id: generateId(template.type.toLowerCase()), efficiency: 1 };
+    set({ resources: newResources, buildings: [...state.buildings, newBuilding] });
     return true;
   },
 
   unlockTechnology: (techId) => {
     const state = get();
-    const technology = state.technologies.find((tech) => tech.id === techId);
-    if (!technology || technology.unlocked) return false;
+    const tech = state.technologies.find(t => t.id === techId);
+    if (!tech || tech.unlocked) return false;
 
-    const dependencyMet = technology.dependencies.every((dependencyId) =>
-      state.technologies.some((tech) => tech.id === dependencyId && tech.unlocked),
-    );
-    if (!dependencyMet || !canAfford(state.resources, technology.cost)) return false;
+    const canAfford = Object.entries(tech.cost).every(([res, amt]) => (state.resources[res as ResourceType] || 0) >= (amt || 0));
+    if (!canAfford) return false;
 
     const newResources = { ...state.resources };
-    applyResourceDelta(newResources, technology.cost, -1);
+    Object.entries(tech.cost).forEach(([res, amt]) => {
+      newResources[res as ResourceType] -= (amt || 0);
+    });
 
     set({
       resources: newResources,
-      technologies: state.technologies.map((tech) =>
-        tech.id === techId ? { ...tech, unlocked: true } : tech,
-      ),
-      drones: state.drones + (techId === 'neural-drone-swarm' ? 2 : 0),
-      shields: state.shields + (techId === 'quantum-shield-mesh' ? 80 : 0),
+      technologies: state.technologies.map(t => t.id === techId ? { ...t, unlocked: true } : t)
     });
     return true;
   },
 
   calculateOfflineProgress: () => {
-    const { lastSaveTime, buildings, resources, drones, shields, threatLevel, technologies } = get();
-    const currentTime = Date.now();
-    const elapsedSeconds = Math.min(
-      MAX_OFFLINE_SECONDS,
-      Math.max(0, Math.floor((currentTime - lastSaveTime) / 1000)),
-    );
+    const state = get();
+    const now = Date.now();
+    const elapsed = Math.min(MAX_OFFLINE_SECONDS, Math.max(0, Math.floor((now - state.lastSaveTime) / 1000)));
+    if (elapsed <= 0) return { elapsedSeconds: 0, production: {}, raidDamage: 0 };
 
-    if (elapsedSeconds <= 0) return { elapsedSeconds: 0, production: {}, raidDamage: 0 };
-
-    const newResources = { ...resources };
+    const newResources = { ...state.resources };
     const production: ResourceMap = {};
-    const miningBonus = technologies.some((tech) => tech.id === 'neural-drone-swarm' && tech.unlocked) ? 1.1 : 1;
-    const automationBonus = 1 + drones * 0.03;
 
-    buildings.forEach((building) => {
-      const buildingMultiplier = (building.level || 1) * automationBonus * miningBonus;
-      if (building.production) {
-        Object.entries(building.production).forEach(([res, rate]) => {
-          const amount = (rate || 0) * elapsedSeconds * buildingMultiplier;
-          applyResourceDelta(newResources, { [res]: amount } as ResourceMap);
-          production[res as ResourceType] = (production[res as ResourceType] || 0) + amount;
+    state.buildings.forEach(b => {
+      if (b.production) {
+        Object.entries(b.production).forEach(([res, val]) => {
+          const amt = (val || 0) * elapsed * (b.efficiency || 1);
+          newResources[res as ResourceType] = (newResources[res as ResourceType] || 0) + amt;
+          production[res as ResourceType] = (production[res as ResourceType] || 0) + amt;
         });
       }
-      if (building.consumption) {
-        Object.entries(building.consumption).forEach(([res, rate]) => {
-          const amount = (rate || 0) * elapsedSeconds;
-          applyResourceDelta(newResources, { [res]: -amount } as ResourceMap);
-          production[res as ResourceType] = (production[res as ResourceType] || 0) - amount;
+      if (b.consumption) {
+        Object.entries(b.consumption).forEach(([res, val]) => {
+          newResources[res as ResourceType] = Math.max(0, (newResources[res as ResourceType] || 0) - (val || 0) * elapsed);
         });
       }
     });
 
-    const defenseRating = buildings.reduce((total, building) => total + (building.defense || 0) * (building.level || 1), shields);
-    const raidChance = Math.min(0.85, (threatLevel * elapsedSeconds) / 864000);
-    // Increased minimum time for raid triggers to prevent spam on quick app switches
-    const raidTriggered = elapsedSeconds > 300 && Math.random() < raidChance;
-    const raidDamage = raidTriggered ? Math.max(0, Math.round(threatLevel * 8 - defenseRating * 0.35)) : 0;
-
-    if (raidDamage > 0) {
-      newResources.METAL = Math.max(0, newResources.METAL - raidDamage);
-      newResources.ENERGY = Math.max(0, newResources.ENERGY - Math.round(raidDamage * 0.5));
-    }
-
-    set((state) => ({
-      resources: newResources,
-      lastSaveTime: currentTime,
-      threatLevel: Math.min(100, state.threatLevel + (raidTriggered ? 4 : 1)),
-      chatLog: raidTriggered
-        ? [
-            ...state.chatLog.slice(-24),
-            {
-              id: generateId('raid'),
-              playerId: 'galaxy-host',
-              channel: 'SYSTEM',
-              message: raidDamage > 0
-                ? `Pirate raid resolved offline. Lost ${raidDamage} metal and ${Math.round(raidDamage * 0.5)} energy.`
-                : 'Pirate raid intercepted by automated defenses during offline simulation.',
-              timestamp: currentTime,
-            },
-          ]
-        : state.chatLog,
-    }));
-
-    return {
-      elapsedSeconds,
-      production,
-      raidDamage,
-      eventName: raidTriggered ? 'Pirate Raid' : undefined,
-    };
+    set({ resources: newResources, lastSaveTime: now, lastTickTime: now });
+    return { elapsedSeconds: elapsed, production, raidDamage: 0 };
   },
-
-  ingestPacket: (packet) => {
-    if (packet.type === 'CHAT_MESSAGE') {
-      set((state) => ({
-        chatLog: [
-          ...state.chatLog.slice(-24),
-          {
-            id: generateId('packet-chat'),
-            playerId: packet.playerId,
-            channel: 'LOCAL',
-            message: String(packet.payload.message || 'Incoming local packet'),
-            timestamp: packet.timestamp,
-          },
-        ],
-      }));
-    }
-
-    if (packet.type === 'RESOURCE_UPDATE') {
-      set((state) => ({
-        resources: { ...state.resources, ...packet.payload } as Record<ResourceType, number>,
-      }));
-    }
-  },
-
-  setHostMode: (mode) => set({ hostMode: mode }),
-
-  sendChatMessage: (message, channel = 'LOCAL') => set((state) => ({
-    chatLog: [
-      ...state.chatLog.slice(-24),
-      {
-        id: generateId('chat'),
-        playerId: state.playerId,
-        channel,
-        message,
-        timestamp: Date.now(),
-      },
-    ],
-  })),
 
   saveGame: async () => {
     const state = get();
     const snapshot = {
       resources: state.resources,
       buildings: state.buildings,
+      planets: state.planets,
+      units: state.units,
       technologies: state.technologies,
-      chatLog: state.chatLog.slice(-25),
+      missions: state.missions,
       playerId: state.playerId,
       lastSaveTime: Date.now(),
       colonyName: state.colonyName,
       drones: state.drones,
-      shields: state.shields, maxShields: state.maxShields, sciencePoints: state.sciencePoints, militaryRank: state.militaryRank,
+      shields: state.shields,
+      maxShields: state.maxShields,
       threatLevel: state.threatLevel,
       galaxySeed: state.galaxySeed,
       hostMode: state.hostMode,
+      sciencePoints: state.sciencePoints,
+      militaryRank: state.militaryRank,
+      settings: state.settings,
     };
 
-    const rawSave = JSON.stringify(snapshot);
-    const isNative = Capacitor.isNativePlatform();
-
-    try {
-      if (isNative) {
-        await sqlitePersistence.set(SAVE_KEY, rawSave);
-        const compressed = await compressState(rawSave);
-        await sqlitePersistence.saveBackup(compressed);
-      }
-
-      // Always save to IndexedDB as well for robustness
-      await idbSet(SAVE_KEY, rawSave);
-      const compressed = await compressState(rawSave);
-      await idbSet(BACKUP_KEY, compressed);
-    } catch (e) {
-      console.error('Failed to save game state', e);
-      // Fallback to localStorage if everything else fails
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem(SAVE_KEY, rawSave);
-      }
+    const raw = JSON.stringify(snapshot);
+    if (Capacitor.isNativePlatform()) {
+      await sqlitePersistence.set(SAVE_KEY, raw);
+      const compressed = await compressState(raw);
+      await sqlitePersistence.saveBackup(compressed);
     }
+    await idbSet(SAVE_KEY, raw);
+    const compressed = await compressState(raw);
+    await idbSet(BACKUP_KEY, compressed);
   },
+
+  sendChatMessage: (message, channel = 'LOCAL') => set(state => ({
+    chatLog: [...state.chatLog.slice(-50), { id: generateId('chat'), message, channel, timestamp: Date.now() }]
+  })),
+
+  setHostMode: (mode) => set({ hostMode: mode }),
 }));
