@@ -1,10 +1,15 @@
 import { useEffect } from 'react';
 import { Scene } from './components/Scene';
 import { HUD } from './components/HUD';
-import { AITerminal } from './components/AITerminal';
+import { AITerminalWrapper as AITerminal } from './components/AITerminalWrapper';
 import { useGameStore } from './store/useGameStore';
 import { useEventStore } from './store/useEventStore';
 import { Loader2 } from 'lucide-react';
+import { Capacitor } from '@capacitor/core';
+import { StatusBar, Style } from '@capacitor/status-bar';
+import { LocalNotifications } from '@capacitor/local-notifications';
+import { App as CapApp } from '@capacitor/app';
+import { localDiscovery } from './store/localDiscovery';
 
 const rotatingEvents = [
   {
@@ -39,7 +44,40 @@ function App() {
 
   useEffect(() => {
     initializeStore();
-  }, [initializeStore]);
+    localDiscovery.startDiscovery();
+
+    // Immersive Mode for Android
+    if (Capacitor.isNativePlatform()) {
+      StatusBar.hide();
+      StatusBar.setStyle({ style: Style.Dark });
+
+      LocalNotifications.requestPermissions();
+    }
+
+    // Background simulation hooks
+    const appStateChangeListener = CapApp.addListener('appStateChange', ({ isActive }) => {
+      if (isActive) {
+        // App became active, calculate progress
+        const report = useGameStore.getState().calculateOfflineProgress();
+        if (report.eventName) {
+          triggerEvent({
+            name: report.eventName,
+            description: `Offline simulation resolved a raid with ${report.raidDamage} damage after ${Math.floor(report.elapsedSeconds / 60)} minutes away.`,
+            type: 'PIRATE_RAID',
+            duration: 45,
+            effects: { threatDelta: 4 },
+          });
+        }
+      } else {
+        // App went to background, save state
+        useGameStore.getState().saveGame();
+      }
+    });
+
+    return () => {
+      appStateChangeListener.then(l => l.remove());
+    };
+  }, [initializeStore, triggerEvent]);
 
   useEffect(() => {
     if (!isHydrated) return;
@@ -53,6 +91,17 @@ function App() {
         duration: 45,
         effects: { threatDelta: 4 },
       });
+
+      if (Capacitor.isNativePlatform() && report.raidDamage > 0) {
+        LocalNotifications.schedule({
+          notifications: [{
+            title: 'Colony Under Attack!',
+            body: `A pirate raid occurred while you were away. Lost ${report.raidDamage} metal.`,
+            id: 1,
+            schedule: { at: new Date(Date.now() + 1000) },
+          }]
+        });
+      }
     }
 
     const interval = setInterval(() => {
@@ -61,17 +110,39 @@ function App() {
       removeExpiredEvents();
 
       if (tickReport.eventName) {
+        const description = 'Automated defenses engaged a pirate raid during persistent simulation.';
         triggerEvent({
           name: tickReport.eventName,
-          description: 'Automated defenses engaged a pirate raid during persistent simulation.',
+          description,
           type: 'PIRATE_RAID',
           duration: 45,
           effects: { threatDelta: 4 },
         });
+
+        if (Capacitor.isNativePlatform() && tickReport.raidDamage > 0) {
+          LocalNotifications.schedule({
+            notifications: [{
+              title: 'Colony Breach!',
+              body: description,
+              id: 2,
+            }]
+          });
+        }
       }
 
       if (Math.random() < 0.08) {
-        triggerEvent(rotatingEvents[Math.floor(Math.random() * rotatingEvents.length)]);
+        const event = rotatingEvents[Math.floor(Math.random() * rotatingEvents.length)];
+        triggerEvent(event);
+
+        if (Capacitor.isNativePlatform()) {
+           LocalNotifications.schedule({
+            notifications: [{
+              title: `Galaxy Event: ${event.name}`,
+              body: event.description,
+              id: Date.now(),
+            }]
+          });
+        }
       }
     }, 5000);
 
