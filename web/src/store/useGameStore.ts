@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { get as idbGet, set as idbSet } from 'idb-keyval';
 import type { Building, ChatMessage, GameState, MultiplayerPacket, ResourceMap, ResourceType } from '../../../shared/schemas/game';
+import { Capacitor } from "@capacitor/core";
+import { sqlitePersistence } from "./sqlitePersistence";
 import { GameStateSchema } from '../../../shared/schemas/game';
 import { INITIAL_BUILDINGS, INITIAL_TECHNOLOGIES } from '../../../shared/constants/buildings';
 import { compressState, decompressState } from './persistenceUtils';
@@ -38,7 +40,7 @@ const createInitialState = (): GameState & { isHydrated: boolean } => ({
   lastSaveTime: Date.now(),
   colonyName: 'Astro Colony Alpha',
   drones: 1,
-  shields: 40,
+  shields: 40, maxShields: 100, sciencePoints: 0, militaryRank: 1,
   threatLevel: 12,
   galaxySeed: 'local-spiral-7',
   hostMode: 'SOLO',
@@ -79,23 +81,45 @@ export const useGameStore = create<GameState & { isHydrated: boolean } & GameAct
   ...createInitialState(),
 
   initializeStore: async () => {
+
     let savedState: Partial<GameState> | null = null;
+    const isNative = Capacitor.isNativePlatform();
+
+    if (isNative) {
+      try {
+        await sqlitePersistence.initialize();
+        const sqliteSave = await sqlitePersistence.get(SAVE_KEY);
+        if (sqliteSave) {
+          savedState = JSON.parse(sqliteSave);
+        } else {
+          const sqliteBackup = await sqlitePersistence.getLatestBackup();
+          if (sqliteBackup) {
+            const decompressed = await decompressState(sqliteBackup);
+            savedState = JSON.parse(decompressed);
+          }
+        }
+      } catch (e) {
+        console.error('Failed to load from SQLite', e);
+      }
+    }
 
     // 1. Try to load from IndexedDB
-    try {
-      const rawIdbSave = await idbGet<string>(SAVE_KEY);
-      if (rawIdbSave) {
-        savedState = JSON.parse(rawIdbSave);
-      } else {
-        // 2. Try to load from Backup in IndexedDB (Compressed)
-        const compressedBackup = await idbGet<Uint8Array>(BACKUP_KEY);
-        if (compressedBackup) {
-          const decompressed = await decompressState(compressedBackup);
-          savedState = JSON.parse(decompressed);
+    if (!savedState) {
+      try {
+        const rawIdbSave = await idbGet<string>(SAVE_KEY);
+        if (rawIdbSave) {
+          savedState = JSON.parse(rawIdbSave);
+        } else {
+          // 2. Try to load from Backup in IndexedDB (Compressed)
+          const compressedBackup = await idbGet<Uint8Array>(BACKUP_KEY);
+          if (compressedBackup) {
+            const decompressed = await decompressState(compressedBackup);
+            savedState = JSON.parse(decompressed);
+          }
         }
+      } catch (e) {
+        console.error('Failed to load from IndexedDB', e);
       }
-    } catch (e) {
-      console.error('Failed to load from IndexedDB', e);
     }
 
     // 3. Fallback/Migration: Try to load from localStorage
@@ -119,6 +143,8 @@ export const useGameStore = create<GameState & { isHydrated: boolean } & GameAct
       const validated = GameStateSchema.safeParse(merged);
       if (validated.success) {
         set(validated.data as any);
+        // Process offline progress immediately after hydration
+        get().calculateOfflineProgress();
         return;
       }
     }
@@ -213,7 +239,8 @@ export const useGameStore = create<GameState & { isHydrated: boolean } & GameAct
 
     const defenseRating = buildings.reduce((total, building) => total + (building.defense || 0) * (building.level || 1), shields);
     const raidChance = Math.min(0.85, (threatLevel * elapsedSeconds) / 864000);
-    const raidTriggered = elapsedSeconds > 120 && Math.random() < raidChance;
+    // Increased minimum time for raid triggers to prevent spam on quick app switches
+    const raidTriggered = elapsedSeconds > 300 && Math.random() < raidChance;
     const raidDamage = raidTriggered ? Math.max(0, Math.round(threatLevel * 8 - defenseRating * 0.35)) : 0;
 
     if (raidDamage > 0) {
@@ -298,24 +325,29 @@ export const useGameStore = create<GameState & { isHydrated: boolean } & GameAct
       lastSaveTime: Date.now(),
       colonyName: state.colonyName,
       drones: state.drones,
-      shields: state.shields,
+      shields: state.shields, maxShields: state.maxShields, sciencePoints: state.sciencePoints, militaryRank: state.militaryRank,
       threatLevel: state.threatLevel,
       galaxySeed: state.galaxySeed,
       hostMode: state.hostMode,
     };
 
     const rawSave = JSON.stringify(snapshot);
+    const isNative = Capacitor.isNativePlatform();
 
     try {
-      // Main save
-      await idbSet(SAVE_KEY, rawSave);
+      if (isNative) {
+        await sqlitePersistence.set(SAVE_KEY, rawSave);
+        const compressed = await compressState(rawSave);
+        await sqlitePersistence.saveBackup(compressed);
+      }
 
-      // Compressed backup
+      // Always save to IndexedDB as well for robustness
+      await idbSet(SAVE_KEY, rawSave);
       const compressed = await compressState(rawSave);
       await idbSet(BACKUP_KEY, compressed);
     } catch (e) {
-      console.error('Failed to save to IndexedDB', e);
-      // Fallback to localStorage if IDB fails
+      console.error('Failed to save game state', e);
+      // Fallback to localStorage if everything else fails
       if (typeof localStorage !== 'undefined') {
         localStorage.setItem(SAVE_KEY, rawSave);
       }
