@@ -1,48 +1,42 @@
-import { Capacitor } from '@capacitor/core';
-import { useGameStore } from './useGameStore';
 
-export interface Peer {
+export interface PeerColony {
   id: string;
   name: string;
-  isHost: boolean;
+  threatLevel: number;
+  rank: number;
+  lastSeen: number;
 }
 
 class LocalDiscovery {
-  private peers: Peer[] = [];
-  private interval: any = null;
+  private peers: PeerColony[] = [];
+  private onPeersUpdated: (peers: PeerColony[]) => void = () => {};
 
-  startDiscovery() {
-    if (this.interval) return;
+  startDiscovery(callback?: (peers: PeerColony[]) => void) {
+    if (callback) this.onPeersUpdated = callback;
 
-    // Simulate finding peers every 10 seconds
-    this.interval = setInterval(() => {
-      if (Math.random() < 0.3) {
-        const newPeer: Peer = {
-          id: `peer-${Math.floor(Math.random() * 1000)}`,
-          name: `Colony-${Math.random().toString(36).substring(7).toUpperCase()}`,
-          isHost: Math.random() > 0.5,
-        };
-
-        this.peers = [...this.peers.slice(-4), newPeer];
-
-        if (Capacitor.isNativePlatform()) {
-          useGameStore.getState().sendChatMessage(
-            `Local colony signature detected: ${newPeer.name}`,
-            'SYSTEM'
-          );
-        }
+    // Simulate finding peers over WiFi Direct / Hotspot
+    setInterval(() => {
+      if (Math.random() < 0.1 && this.peers.length < 5) {
+        this.addMockPeer();
       }
-    }, 10000);
+      this.peers = this.peers.filter(p => (Date.now() - p.lastSeen) < 30000);
+      this.onPeersUpdated([...this.peers]);
+    }, 5000);
   }
 
-  stopDiscovery() {
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
-    }
+  private addMockPeer() {
+    const names = ['Nebula Outpost', 'Void Station', 'Zenith Colony', 'Titan Base'];
+    const newPeer: PeerColony = {
+      id: `peer-${Math.random().toString(36).substr(2, 5)}`,
+      name: names[Math.floor(Math.random() * names.length)],
+      threatLevel: Math.floor(Math.random() * 100),
+      rank: Math.floor(Math.random() * 10) + 1,
+      lastSeen: Date.now()
+    };
+    this.peers.push(newPeer);
   }
 
-  getAvailablePeers() {
+  getPeers() {
     return this.peers;
   }
 }

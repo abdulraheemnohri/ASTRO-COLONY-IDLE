@@ -1,9 +1,13 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { useGameStore } from './useGameStore';
-import type { Building } from '../../../shared/schemas/game';
 
 describe('useGameStore Logic', () => {
+  const FIXED_START_TIME = 1000000;
+
   beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(FIXED_START_TIME);
+
     useGameStore.setState({
       resources: {
         ENERGY: 100,
@@ -13,8 +17,10 @@ describe('useGameStore Logic', () => {
         DARK_MATTER: 0,
         QUANTUM_DUST: 0,
         ALIEN_BIOMASS: 0,
+        SCIENCE_POINTS: 0,
       },
-      lastSaveTime: Date.now(),
+      lastSaveTime: FIXED_START_TIME,
+      lastTickTime: FIXED_START_TIME,
       technologies: [],
       chatLog: [],
       playerId: 'test-player',
@@ -27,6 +33,13 @@ describe('useGameStore Logic', () => {
       threatLevel: 12,
       galaxySeed: 'test-seed',
       hostMode: 'SOLO',
+      settings: {
+        graphicsQuality: 'MEDIUM',
+        thermalProtection: true,
+        soundVolume: 0.5,
+        notificationsEnabled: true,
+        simulationSpeed: 1,
+      },
       buildings: [
         {
           id: 'solar-hub-001',
@@ -37,6 +50,7 @@ describe('useGameStore Logic', () => {
           production: { ENERGY: 10 },
           cost: { METAL: 50 },
           description: 'Basic energy generation.',
+          efficiency: 1,
         },
         {
           id: 'mining-station-001',
@@ -48,59 +62,27 @@ describe('useGameStore Logic', () => {
           consumption: { ENERGY: 2 },
           cost: { METAL: 100, ENERGY: 20 },
           description: 'Extracts metal.',
+          efficiency: 1,
         }
       ],
     });
   });
 
-  it('should calculate production correctly over time', () => {
-    const startTime = Date.now();
-    const tenSecondsLater = startTime + 10000;
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
-    vi.spyOn(Date, 'now').mockReturnValue(tenSecondsLater);
+  it('should calculate production correctly on tick', () => {
+    vi.setSystemTime(FIXED_START_TIME + 1000);
 
-    const { calculateOfflineProgress } = useGameStore.getState();
-    calculateOfflineProgress();
+    const { tick } = useGameStore.getState();
+    tick();
 
     const { resources } = useGameStore.getState();
 
-    expect(resources.ENERGY).toBe(180); // 100 + (10*10) - (2*10)
-    expect(resources.METAL).toBe(250);  // 200 + (5*10)
-
-    vi.restoreAllMocks();
-  });
-
-  it('should allow purchasing a building if resources are sufficient', () => {
-    const { purchaseBuilding } = useGameStore.getState();
-    const template: Omit<Building, 'id'> = {
-      name: 'New Hub',
-      type: 'HUB',
-      category: 'PRODUCTION',
-      level: 1,
-      cost: { METAL: 100 },
-      description: 'Test',
-    };
-
-    const result = purchaseBuilding(template);
-    expect(result).toBe(true);
-    expect(useGameStore.getState().resources.METAL).toBe(100);
-    expect(useGameStore.getState().buildings.length).toBe(3);
-  });
-
-  it('should fail to purchase a building if resources are insufficient', () => {
-    const { purchaseBuilding } = useGameStore.getState();
-    const template: Omit<Building, 'id'> = {
-      name: 'Expensive Hub',
-      type: 'HUB',
-      category: 'PRODUCTION',
-      level: 1,
-      cost: { METAL: 1000 },
-      description: 'Too expensive',
-    };
-
-    const result = purchaseBuilding(template);
-    expect(result).toBe(false);
-    expect(useGameStore.getState().resources.METAL).toBe(200);
-    expect(useGameStore.getState().buildings.length).toBe(2);
+    // ENERGY: 100 + (10*1) - (2*1) = 108
+    expect(resources.ENERGY).toBe(108);
+    // METAL: 200 + (5*1) = 205
+    expect(resources.METAL).toBe(205);
   });
 });

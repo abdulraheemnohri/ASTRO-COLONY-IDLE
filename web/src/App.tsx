@@ -49,16 +49,13 @@ function App() {
     initializeStore();
     localDiscovery.startDiscovery();
 
-    // Immersive Mode for Android
     if (Capacitor.isNativePlatform()) {
       StatusBar.hide();
       StatusBar.setStyle({ style: Style.Dark });
       LocalNotifications.requestPermissions();
 
-      // Battery / Power Optimization
       Device.getBatteryInfo().then(info => {
         if ((info.batteryLevel || 1) < 0.2 || info.isCharging === false) {
-           // Proactive optimization for low battery
            setIsLowPowerMode(true);
         }
       });
@@ -98,64 +95,21 @@ function App() {
         duration: 45,
         effects: { threatDelta: 4 },
       });
-
-      if (Capacitor.isNativePlatform() && report.raidDamage > 0) {
-        LocalNotifications.schedule({
-          notifications: [{
-            title: 'Colony Under Attack!',
-            body: `A pirate raid occurred while you were away. Lost ${report.raidDamage} metal.`,
-            id: 1,
-            schedule: { at: new Date(Date.now() + 1000) },
-          }]
-        });
-      }
     }
 
     const interval = setInterval(() => {
-      // Throttle logic for low power
-      const shouldSave = Math.random() < (isLowPowerMode ? 0.2 : 1.0);
+      useGameStore.getState().tick();
 
-      const tickReport = useGameStore.getState().calculateOfflineProgress();
+      const shouldSave = Math.random() < (isLowPowerMode ? 0.05 : 0.2);
       if (shouldSave) useGameStore.getState().saveGame();
 
       removeExpiredEvents();
 
-      if (tickReport.eventName) {
-        const description = 'Automated defenses engaged a pirate raid during persistent simulation.';
-        triggerEvent({
-          name: tickReport.eventName,
-          description,
-          type: 'PIRATE_RAID',
-          duration: 45,
-          effects: { threatDelta: 4 },
-        });
-
-        if (Capacitor.isNativePlatform() && tickReport.raidDamage > 0) {
-          LocalNotifications.schedule({
-            notifications: [{
-              title: 'Colony Breach!',
-              body: description,
-              id: 2,
-            }]
-          });
-        }
-      }
-
-      if (Math.random() < 0.08) {
+      if (Math.random() < 0.005) {
         const event = rotatingEvents[Math.floor(Math.random() * rotatingEvents.length)];
         triggerEvent(event);
-
-        if (Capacitor.isNativePlatform()) {
-           LocalNotifications.schedule({
-            notifications: [{
-              title: `Galaxy Event: ${event.name}`,
-              body: event.description,
-              id: Date.now(),
-            }]
-          });
-        }
       }
-    }, isLowPowerMode ? 15000 : 5000);
+    }, isLowPowerMode ? 500 : 100);
 
     return () => clearInterval(interval);
   }, [isHydrated, calculateOfflineProgress, removeExpiredEvents, triggerEvent, isLowPowerMode]);
@@ -176,7 +130,6 @@ function App() {
       <AITerminal />
       <EventOverlay />
 
-      {/* Battery Optimization Banner */}
       {isLowPowerMode && (
         <div className="fixed top-0 left-0 w-full bg-yellow-500/80 text-black text-[10px] font-bold text-center py-1 z-[100] uppercase tracking-widest pointer-events-none">
           Low Power Mode Active: Simulation frequency reduced
