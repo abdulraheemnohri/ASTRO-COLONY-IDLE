@@ -12,8 +12,8 @@ export const ResourceTypeSchema = z.enum([
 ]);
 export type ResourceType = z.infer<typeof ResourceTypeSchema>;
 
-export const ResourceMapSchema = z.partialRecord(ResourceTypeSchema, z.number());
-export type ResourceMap = z.infer<typeof ResourceMapSchema>;
+export const ResourceMapSchema = z.record(z.string(), z.number());
+export type ResourceMap = Record<string, number>;
 
 export const BuildingCategorySchema = z.enum([
   'PRODUCTION',

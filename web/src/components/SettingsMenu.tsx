@@ -1,4 +1,4 @@
-import { X, Monitor, Thermometer, Volume2, Bell, Zap } from 'lucide-react';
+import { X, Settings, Monitor, Thermometer, Volume2, Bell, Zap } from 'lucide-react';
 import { useGameStore } from '../store/useGameStore';
 import type { GameSettings } from '../../../shared/schemas/game';
 
@@ -112,5 +112,3 @@ export const SettingsMenu = ({ onClose }: { onClose: () => void }) => {
     </div>
   );
 };
-
-import { Settings } from 'lucide-react';

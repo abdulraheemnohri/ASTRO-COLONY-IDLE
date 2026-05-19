@@ -49,7 +49,7 @@ export const Planet = ({ position, color, size }: { position: [number, number, n
       const quat = new Quaternion();
       const scale = new Vector3(0.25, 0.25, 0.25);
 
-      buildings.forEach((_, idx) => {
+      buildings.forEach((_: unknown, idx: number) => {
         const phi = Math.acos(-1 + (2 * idx) / Math.max(buildings.length, 1));
         const theta = Math.sqrt(buildings.length * Math.PI) * phi + time * 0.1;
         const orbitRadius = size + 1.2;
