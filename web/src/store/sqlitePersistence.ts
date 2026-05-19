@@ -41,7 +41,7 @@ class SQLitePersistence {
   async saveBackup(data: Uint8Array): Promise<void> {
     if (!this.db) return;
     // We store the backup as a base64 string or similar if BLOB is tricky via bridge
-    const base64 = btoa(String.fromCharCode(...data));
+    const base64 = btoa(new Uint8Array(data).reduce((data, byte) => data + String.fromCharCode(byte), ""));
     await this.db.run('INSERT INTO backups (data) VALUES (?)', [base64]);
     // Keep only last 5 backups
     await this.db.run('DELETE FROM backups WHERE id NOT IN (SELECT id FROM backups ORDER BY timestamp DESC LIMIT 5)');

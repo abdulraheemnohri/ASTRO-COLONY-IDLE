@@ -3,6 +3,7 @@ import { aiClient } from '../ai/webLlmClient';
 import { applyAIPatch, type AIPatch } from '../ai/patchEngine';
 import { useGameStore } from '../store/useGameStore';
 import { Bot, Terminal, Loader2, Sparkles } from 'lucide-react';
+import type { Technology } from '../../../shared/schemas/game';
 
 export const AITerminal = () => {
   const [log, setLog] = useState<string[]>(['AI Core Online. Awaiting local model initialization...']);
@@ -13,7 +14,7 @@ export const AITerminal = () => {
   const buildings = useGameStore((state) => state.buildings);
   const technologies = useGameStore((state) => state.technologies);
 
-  const context = `Resources ${JSON.stringify(resources)}. Buildings ${buildings.length}. Unlocked tech ${technologies.filter((tech) => tech.unlocked).map((tech) => tech.name).join(', ') || 'none'}.`;
+  const context = `Resources ${JSON.stringify(resources)}. Buildings ${buildings.length}. Unlocked tech ${technologies.filter((tech: Technology) => tech.unlocked).map((tech: Technology) => tech.name).join(', ') || 'none'}.`;
 
   const initAI = async () => {
     setIsInitializing(true);

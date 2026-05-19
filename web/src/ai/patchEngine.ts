@@ -1,5 +1,5 @@
 import { useGameStore } from '../store/useGameStore';
-import type { Building, ResourceMap, ResourceType, Technology, Mission } from '../../../shared/schemas/game';
+import type { Building, ResourceMap, ResourceType, Technology, Mission, GameState } from '../../../shared/schemas/game';
 import { BuildingSchema, TechnologySchema, MissionSchema } from '../../../shared/schemas/game';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
@@ -61,13 +61,13 @@ export const applyAIPatch = (patch: AIPatch): PatchValidationResult => {
       notifyAIChange('New Building Design', `AI discovered blueprints for ${(patch.payload as Building).name}`);
       break;
     case 'ADD_TECHNOLOGY':
-      useGameStore.setState((state) => ({
+      useGameStore.setState((state: GameState) => ({
         technologies: [...state.technologies, patch.payload as Technology],
       }));
       notifyAIChange('New Research Path', `AI evolved a new technology: ${(patch.payload as Technology).name}`);
       break;
     case 'ADD_MISSION':
-      useGameStore.setState((state) => ({
+      useGameStore.setState((state: GameState) => ({
         missions: [...state.missions, patch.payload as Mission],
       }));
       notifyAIChange('New Objective', `AI Governor issued a priority mission: ${(patch.payload as Mission).title}`);
@@ -79,7 +79,7 @@ export const applyAIPatch = (patch: AIPatch): PatchValidationResult => {
       break;
     case 'UPGRADE_BUILDING': {
       const payload = patch.payload as { id: string };
-      const updatedBuildings = store.buildings.map((building) =>
+      const updatedBuildings = store.buildings.map((building: Building) =>
         building.id === payload.id ? { ...building, level: (building.level || 1) + 1 } : building,
       );
       useGameStore.setState({ buildings: updatedBuildings });
@@ -88,7 +88,7 @@ export const applyAIPatch = (patch: AIPatch): PatchValidationResult => {
     }
     case 'RESEARCH_BOOST': {
         const payload = patch.payload as { techId: string, amount: number };
-        const updatedTechs = store.technologies.map((tech) =>
+        const updatedTechs = store.technologies.map((tech: Technology) =>
           tech.id === payload.techId ? { ...tech, progress: Math.min(100, (tech.progress || 0) + payload.amount) } : tech
         );
         useGameStore.setState({ technologies: updatedTechs });

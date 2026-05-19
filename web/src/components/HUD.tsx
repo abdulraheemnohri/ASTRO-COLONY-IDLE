@@ -32,7 +32,7 @@ export const HUD = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [sidePanelOpen, setSidePanelOpen] = useState(true);
 
-  const defenseRating = buildings.reduce((total, b) => total + (b.defense || 0) * (b.level || 1), shields);
+  const defenseRating = buildings.reduce((total: number, b: Building) => total + (b.defense || 0) * (b.level || 1), shields);
 
   return (
     <div className="fixed inset-0 pointer-events-none p-4 flex flex-col justify-between font-mono uppercase tracking-wider text-cyan-500 overflow-hidden">
@@ -133,7 +133,7 @@ export const HUD = () => {
       <div className="pointer-events-auto flex items-end justify-between gap-4">
         <div className="flex flex-col gap-2">
           <div className="bg-black/60 backdrop-blur-xl border border-cyan-500/30 p-2 rounded-2xl flex gap-2 overflow-x-auto max-w-[50vw] scrollbar-hide">
-            {buildings.slice(-5).map((building) => (
+            {buildings.slice(-5).map((building: Building) => (
               <BuildingChip key={building.id} building={building} />
             ))}
           </div>
@@ -220,7 +220,7 @@ const BuildMenu = ({
       <div className="flex-1 overflow-y-auto grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 pr-2 scrollbar-hide">
         {BUILDING_TEMPLATES.map((template) => {
           const canAffordBuilding = Object.entries(template.cost).every(
-            ([res, amount]) => (resources[res as ResourceType] || 0) >= (amount || 0),
+            ([res, amount]) => (resources[res as ResourceType] || 0) >= ((amount as number) || 0),
           );
           return (
             <div key={template.name} className="group border border-cyan-500/20 p-5 rounded-2xl flex flex-col gap-4 bg-cyan-950/10 hover:bg-cyan-500/10 hover:border-cyan-500/50 transition-all duration-300">
@@ -246,7 +246,7 @@ const TechPanel = ({ technologies, resources, unlockTechnology }: { technologies
     <div className="flex items-center gap-2 text-xs text-white mb-4 font-black"><Atom size={16} className="text-purple-400" /> SELF-EVOLVING TECH</div>
     <div className="space-y-3">
       {technologies.map((tech) => {
-        const canAfford = Object.entries(tech.cost).every(([res, amt]) => (resources[res as ResourceType] || 0) >= (amt || 0));
+        const canAfford = Object.entries(tech.cost).every(([res, amt]) => (resources[res as ResourceType] || 0) >= ((amt as number) || 0));
         return (
           <button
             key={tech.id}

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { get as idbGet, set as idbSet } from 'idb-keyval';
-import type { Building, GameState, ResourceMap, ResourceType, GameSettings } from '../../../shared/schemas/game';
+import type { Building, GameState, ResourceMap, ResourceType, GameSettings, Technology, Mission } from '../../../shared/schemas/game';
 import { Capacitor } from "@capacitor/core";
 import { sqlitePersistence } from "./sqlitePersistence";
 import { GameStateSchema } from '../../../shared/schemas/game';
@@ -25,7 +25,9 @@ const createResourceBank = (): Record<ResourceType, number> => ({
 
 export const generateId = (prefix: string) => `${prefix}-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 
-const createInitialState = (): GameState & { isHydrated: boolean; lastTickTime: number } => ({
+type StoreState = GameState & { isHydrated: boolean; lastTickTime: number };
+
+const createInitialState = (): StoreState => ({
   resources: createResourceBank(),
   planets: [],
   buildings: INITIAL_BUILDINGS,
@@ -78,7 +80,7 @@ interface GameActions {
   completeMission: (missionId: string) => void;
 }
 
-export const useGameStore = create<GameState & { isHydrated: boolean; lastTickTime: number } & GameActions>((set, get) => ({
+export const useGameStore = create<StoreState & GameActions>((set, get) => ({
   ...createInitialState(),
 
   initializeStore: async () => {
@@ -104,7 +106,7 @@ export const useGameStore = create<GameState & { isHydrated: boolean; lastTickTi
       const merged = { ...createInitialState(), ...savedState, isHydrated: true };
       const validated = GameStateSchema.safeParse(merged);
       if (validated.success) {
-        set(validated.data as any);
+        set({ ...validated.data, isHydrated: true });
         get().calculateOfflineProgress();
         return;
       }
@@ -121,15 +123,17 @@ export const useGameStore = create<GameState & { isHydrated: boolean; lastTickTi
     const tickMultiplier = (deltaMs / 1000) * state.settings.simulationSpeed;
     const newResources = { ...state.resources };
 
-    state.buildings.forEach((b) => {
+    state.buildings.forEach((b: Building) => {
       if (b.production) {
         Object.entries(b.production).forEach(([res, val]) => {
-          newResources[res as ResourceType] = (newResources[res as ResourceType] || 0) + (val || 0) * tickMultiplier * (b.efficiency || 1);
+          const productionVal = (val as number) || 0;
+          newResources[res as ResourceType] = (newResources[res as ResourceType] || 0) + productionVal * tickMultiplier * (b.efficiency || 1);
         });
       }
       if (b.consumption) {
         Object.entries(b.consumption).forEach(([res, val]) => {
-          newResources[res as ResourceType] = Math.max(0, (newResources[res as ResourceType] || 0) - (val || 0) * tickMultiplier);
+          const consumptionVal = (val as number) || 0;
+          newResources[res as ResourceType] = Math.max(0, (newResources[res as ResourceType] || 0) - consumptionVal * tickMultiplier);
         });
       }
     });
@@ -137,7 +141,7 @@ export const useGameStore = create<GameState & { isHydrated: boolean; lastTickTi
     set({ resources: newResources, lastTickTime: now });
   },
 
-  resolveCombat: (enemyAttack) => {
+  resolveCombat: (enemyAttack: number) => {
     const state = get();
     let remainingAttack = enemyAttack;
     let newShields = state.shields;
@@ -156,63 +160,64 @@ export const useGameStore = create<GameState & { isHydrated: boolean; lastTickTi
     return { damageDealt: totalDmg, resolved: remainingAttack <= 0 };
   },
 
-  completeMission: (missionId) => {
+  completeMission: (missionId: string) => {
     const state = get();
-    const mission = state.missions.find(m => m.id === missionId);
+    const mission = state.missions.find((m: Mission) => m.id === missionId);
     if (!mission || mission.completed) return;
 
     const newResources = { ...state.resources };
     Object.entries(mission.reward).forEach(([res, amt]) => {
-      newResources[res as ResourceType] = (newResources[res as ResourceType] || 0) + (amt || 0);
+      const rewardAmt = (amt as number) || 0;
+      newResources[res as ResourceType] = (newResources[res as ResourceType] || 0) + rewardAmt;
     });
 
     set({
       resources: newResources,
-      missions: state.missions.map(m => m.id === missionId ? { ...m, completed: true } : m)
+      missions: state.missions.map((m: Mission) => m.id === missionId ? { ...m, completed: true } : m)
     });
   },
 
-  updateSettings: (newSettings) => set((state) => ({ settings: { ...state.settings, ...newSettings } })),
+  updateSettings: (newSettings: Partial<GameSettings>) => set((state: StoreState) => ({ settings: { ...state.settings, ...newSettings } })),
 
-  addResource: (type, amount) => set((state) => ({
+  addResource: (type: ResourceType, amount: number) => set((state: StoreState) => ({
     resources: { ...state.resources, [type]: Math.max(0, (state.resources[type] || 0) + amount) }
   })),
 
-  buildBuilding: (building) => set((state) => ({
+  buildBuilding: (building: Building) => set((state: StoreState) => ({
     buildings: [...state.buildings, building]
   })),
 
-  purchaseBuilding: (template) => {
+  purchaseBuilding: (template: Omit<Building, 'id'>) => {
     const state = get();
-    const canAfford = Object.entries(template.cost).every(([res, amt]) => (state.resources[res as ResourceType] || 0) >= (amt || 0));
+    const canAfford = Object.entries(template.cost).every(([res, amt]) => (state.resources[res as ResourceType] || 0) >= ((amt as number) || 0));
     if (!canAfford) return false;
 
     const newResources = { ...state.resources };
     Object.entries(template.cost).forEach(([res, amt]) => {
-      newResources[res as ResourceType] -= (amt || 0);
+      newResources[res as ResourceType] -= ((amt as number) || 0);
     });
 
-    const newBuilding: Building = { ...template, id: generateId(template.type.toLowerCase()), efficiency: 1 };
+    const newBuilding = { ...template, id: generateId(template.type.toLowerCase()), efficiency: 1 } as Building;
     set({ resources: newResources, buildings: [...state.buildings, newBuilding] });
     return true;
   },
 
-  unlockTechnology: (techId) => {
+  unlockTechnology: (techId: string) => {
     const state = get();
-    const tech = state.technologies.find(t => t.id === techId);
+    const tech = state.technologies.find((t: Technology) => t.id === techId);
     if (!tech || tech.unlocked) return false;
 
-    const canAfford = Object.entries(tech.cost).every(([res, amt]) => (state.resources[res as ResourceType] || 0) >= (amt || 0));
+    const canAfford = Object.entries(tech.cost).every(([res, amt]) => (state.resources[res as ResourceType] || 0) >= ((amt as number) || 0));
     if (!canAfford) return false;
 
     const newResources = { ...state.resources };
     Object.entries(tech.cost).forEach(([res, amt]) => {
-      newResources[res as ResourceType] -= (amt || 0);
+      newResources[res as ResourceType] -= ((amt as number) || 0);
     });
 
     set({
       resources: newResources,
-      technologies: state.technologies.map(t => t.id === techId ? { ...t, unlocked: true } : t)
+      technologies: state.technologies.map((t: Technology) => t.id === techId ? { ...t, unlocked: true } : t)
     });
     return true;
   },
@@ -224,19 +229,21 @@ export const useGameStore = create<GameState & { isHydrated: boolean; lastTickTi
     if (elapsed <= 0) return { elapsedSeconds: 0, production: {}, raidDamage: 0 };
 
     const newResources = { ...state.resources };
-    const production: ResourceMap = {};
+    const production: any = {};
 
-    state.buildings.forEach(b => {
+    state.buildings.forEach((b: Building) => {
       if (b.production) {
         Object.entries(b.production).forEach(([res, val]) => {
-          const amt = (val || 0) * elapsed * (b.efficiency || 1);
+          const prodVal = (val as number) || 0;
+          const amt = prodVal * elapsed * (b.efficiency || 1);
           newResources[res as ResourceType] = (newResources[res as ResourceType] || 0) + amt;
           production[res as ResourceType] = (production[res as ResourceType] || 0) + amt;
         });
       }
       if (b.consumption) {
         Object.entries(b.consumption).forEach(([res, val]) => {
-          newResources[res as ResourceType] = Math.max(0, (newResources[res as ResourceType] || 0) - (val || 0) * elapsed);
+          const consVal = (val as number) || 0;
+          newResources[res as ResourceType] = Math.max(0, (newResources[res as ResourceType] || 0) - consVal * elapsed);
         });
       }
     });
@@ -279,9 +286,9 @@ export const useGameStore = create<GameState & { isHydrated: boolean; lastTickTi
     await idbSet(BACKUP_KEY, compressed);
   },
 
-  sendChatMessage: (message, channel = 'LOCAL') => set(state => ({
+  sendChatMessage: (message: string, channel: string = 'LOCAL') => set((state: StoreState) => ({
     chatLog: [...state.chatLog.slice(-50), { id: generateId('chat'), message, channel, timestamp: Date.now() }]
   })),
 
-  setHostMode: (mode) => set({ hostMode: mode }),
+  setHostMode: (mode: GameState['hostMode']) => set({ hostMode: mode }),
 }));
